@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "632976359077",
+    "project_id": "mislab-db295",
+    "storage_bucket": "mislab-db295.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:632976359077:android:3613ad4846be234f3d174c",
+        "android_client_info": {
+          "package_name": "com.example.lab3"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "632976359077-urhfjo3nrkks2h1uuatr353lhigmrgbi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC78jJormtuHWXHsCdsbyQlK5-UV_T23V8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "632976359077-urhfjo3nrkks2h1uuatr353lhigmrgbi.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
