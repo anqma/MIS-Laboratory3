@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:lab3/widgets/notifi_service.dart';
 import 'Model/list_item.dart';
@@ -8,6 +9,9 @@ import 'widgets/nov_element.dart';
 import 'Screens/CalendarScreen.dart';
 import 'widgets/LoginWidget.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:lab3/AppStrings.dart';
 
 Future main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,7 +35,7 @@ class MyApp extends StatelessWidget {
           textTheme: ThemeData.light()
               .textTheme
               .copyWith(titleMedium: const TextStyle(fontSize: 26))),
-      home: MainPage(),
+      home: const MainPage(),
     );
   }
 }
@@ -51,9 +55,9 @@ class MainPage extends StatelessWidget {
                 child: Text('Something went wrong!'),
               );
             } else if (snapshot.hasData) {
-              return MyHomePage();
+              return const MyHomePage();
             } else {
-              return LoginWidget();
+              return const LoginWidget();
             }
           },
         ),
@@ -69,6 +73,173 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final user = FirebaseAuth.instance.currentUser!;
+  late GoogleMapController mapController;
+
+  bool mapToggle = false;
+  List<LatLng> polylineCoordinates = [];
+  Position? currentLocation;
+
+  Future<Position> position =
+      Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+
+  Future<void> _getCurrentPosition() async {
+    final hasPermission = await _handleLocationPermission();
+    if (!hasPermission) return;
+    await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high)
+        .then((Position position) {
+      setState(() => currentLocation = position);
+    }).catchError((e) {
+      debugPrint(e);
+    });
+  }
+
+  Future<bool> _handleLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Location services are disabled. Please enable the services')));
+      return false;
+    }
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permissions are denied')));
+        return false;
+      }
+    }
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Location permissions are permanently denied, we cannot request permissions.')));
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    Geolocator.getCurrentPosition().then((currloc) {
+      setState(() {
+        currentLocation = currloc;
+        mapToggle = true;
+      });
+    });
+  }
+
+  void _onMapCreated(GoogleMapController controller) {
+    mapController = controller;
+  }
+
+  void _showLocations() {
+    showModalBottomSheet(
+        context: context,
+        builder: (_) => SizedBox(
+            width: MediaQuery.of(context).size.width,
+            child: mapToggle
+                ? GoogleMap(
+                    onMapCreated: _onMapCreated,
+                    initialCameraPosition: const CameraPosition(
+                      target: LatLng(41.9965, 21.4314),
+                      zoom: 12.0,
+                    ),
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: true,
+                    markers: setMarkers(_userItems),
+                  )
+                : const Center(child: Text('Se vcituva...'))));
+  }
+
+  Set<Marker> setMarkers(List<ListItem> userItems) {
+    return userItems.map((element) {
+      LatLng mesto = LatLng(element.mesto.latitude, element.mesto.longitude);
+      return Marker(
+        markerId: MarkerId(element.id),
+        position: mesto,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: element.predmet),
+      );
+    }).toSet();
+  }
+
+  void _showDirection(ListItem predmet) {
+    _getCurrentPosition();
+    polylineCoordinates.clear();
+    getPolyPoints(
+      predmet.mesto.latitude,
+      predmet.mesto.longitude,
+      currentLocation!.latitude,
+      currentLocation!.longitude,
+    ).then((e) {
+      if (polylineCoordinates.isEmpty) {
+        setState(() {});
+      } else {
+        setState(() => showModalBottomSheet(
+            context: context,
+            builder: (_) => SizedBox(
+                width: MediaQuery.of(context).size.width,
+                child: mapToggle
+                    ? GoogleMap(
+                        onMapCreated: _onMapCreated,
+                        initialCameraPosition: const CameraPosition(
+                          target: LatLng(41.9965, 21.4314),
+                          zoom: 12.0,
+                        ),
+                        myLocationEnabled: true,
+                        myLocationButtonEnabled: true,
+                        markers: setMarker(predmet),
+                        polylines: {
+                          Polyline(
+                            polylineId: PolylineId(predmet.id),
+                            points: polylineCoordinates,
+                            color: Colors.blue,
+                            width: 5,
+                          ),
+                        },
+                      )
+                    : const Center(child: Text('Se vcituva...')))));
+      }
+    });
+  }
+
+  Future<List<LatLng>?> getPolyPoints(
+      double startLat, double startLon, double destLat, double destLon) async {
+    PolylinePoints polylinePoints = PolylinePoints();
+    PolylineResult route = await polylinePoints.getRouteBetweenCoordinates(
+        AppStrings.googleMapsAPIKey,
+        PointLatLng(startLat, startLon),
+        PointLatLng(destLat, destLon),
+        travelMode: TravelMode.driving);
+    if (route.points.isNotEmpty) {
+      for (PointLatLng point in route.points) {
+        polylineCoordinates.add(
+          LatLng(point.latitude, point.longitude),
+        );
+      }
+      setState(() {});
+      return polylineCoordinates;
+    } else {
+      return null;
+    }
+  }
+
+  Set<Marker> setMarker(ListItem predmetLokacija) {
+    return <Marker>{
+      Marker(
+        markerId: MarkerId(predmetLokacija.id),
+        position: LatLng(
+            predmetLokacija.mesto.latitude, predmetLokacija.mesto.longitude),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(title: predmetLokacija.predmet),
+      )
+    };
+  }
 
   List<ListItem> _userItems = [];
 
@@ -145,47 +316,55 @@ class _MyHomePageState extends State<MyHomePage> {
                   return const Center(child: CircularProgressIndicator());
                 }
               })),
-      /*Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      Expanded(
+          child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+        child: Row(
           children: [
-            const Text(
-              'Najaven kako',
-              style: TextStyle(fontSize: 18),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: ElevatedButton(
+                style: ButtonStyle(
+                  fixedSize: MaterialStateProperty.all<Size>(
+                      const Size.fromWidth(180)),
+                  shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+                    RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(5.0),
+                    ),
+                  ),
+                ),
+                onPressed: _showCalendar,
+                child: const Text(
+                  'Prikazi kalendar',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.normal),
+                ),
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              user.email!,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 5),
+            ),
+            Align(
+              alignment: Alignment.bottomLeft,
+              child: ElevatedButton(
+                style: ButtonStyle(
+                  fixedSize: MaterialStateProperty.all<Size>(
+                      const Size.fromWidth(180)),
+                  shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+                    RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(5.0),
+                    ),
+                  ),
+                ),
+                onPressed: _showLocations,
+                child: const Text(
+                  'Prikazi mapa',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.normal),
+                ),
+              ),
             ),
           ],
         ),
-      ),*/
-      Expanded(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: ElevatedButton(
-              style: ButtonStyle(
-                fixedSize:
-                    MaterialStateProperty.all<Size>(const Size.fromWidth(900)),
-                shape: MaterialStateProperty.all<RoundedRectangleBorder>(
-                  RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(5.0),
-                  ),
-                ),
-              ),
-              onPressed: _showCalendar,
-              child: const Text(
-                'Prikazi kalendar',
-                style: TextStyle(fontSize: 19, fontWeight: FontWeight.normal),
-              ),
-            ),
-          ),
-        ),
-      ),
+      )),
     ]);
   }
 
@@ -218,6 +397,12 @@ class _MyHomePageState extends State<MyHomePage> {
                           '${predmet.predmet} na ${DateFormat("dd/MM/yyyy hh:mm").format(predmet.datum)}');
                 },
                 color: const Color.fromARGB(214, 189, 32, 32),
+              ),
+              IconButton(
+                icon: const Icon(Icons.location_pin),
+                onPressed: () async {
+                  _showDirection(predmet);
+                },
               ),
             ],
           ),
